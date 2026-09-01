@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ipo-tracker"
+version = "1.0.0"
+description = "IPO tracking, GMP monitoring and notification backend"
+readme = "README.md"
+requires-python = ">=3.12"
+
+# Runtime dependencies live in requirements.txt, which is the single source of
+# truth and what the Docker build installs. They are deliberately NOT repeated
+# here: two hand-synchronised lists is the kind of duplication that silently
+# drifts. This file's irreplaceable job is the tool configuration below, which
+# ruff, mypy and pytest read from nowhere else.
+#
+#   runtime deps  -> requirements.txt
+#   dev/test deps -> requirements-dev.txt
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[project.optional-dependencies]
+# Notification providers whose client libraries are kept out of the base image
+# and imported lazily; install only the one you actually configure.
+fcm = ["google-auth==2.37.0"]
+webpush = ["pywebpush==2.0.3"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Tests and per-test fixtures share a function-scoped event loop. Only the
+# engine fixture is session-scoped, and it uses NullPool so no asyncpg
+# connection is ever reused across loops.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+markers = [
+    "integration: tests that require a live PostgreSQL database",
+]

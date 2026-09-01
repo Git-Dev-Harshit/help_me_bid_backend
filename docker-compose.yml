@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------
+# `docker compose up --build` brings up the complete system:
+#
+#   migrate (runs once)  ->  api + worker
+#
+# PostgreSQL is NOT run as a container: these services connect to the
+# PostgreSQL instance already running on the host machine, reached from inside
+# containers as `host.docker.internal`.
+#
+# The `migrate` service creates the application database if it does not exist
+# and applies all migrations before anything else connects, so there is still
+# no manual database setup of any kind.
+#
+# To go back to a bundled PostgreSQL container, see docs/deployment.md.
+# ---------------------------------------------------------------------------
+
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-development}
+  APP_NAME: ${APP_NAME:-IPO Tracker}
+  APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Kolkata}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-console}
+  DOCS_ENABLED: ${DOCS_ENABLED:-true}
+  # Defaults to the host machine's PostgreSQL (user/password: postgres).
+  DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/ipo_tracker}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set - copy .env.example to .env}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+  DEFAULT_PHONE_REGION: ${DEFAULT_PHONE_REGION:-IN}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  SCRAPER_ENABLED: ${SCRAPER_ENABLED:-true}
+  SCRAPER_SCHEDULE_TIMES: ${SCRAPER_SCHEDULE_TIMES:-09:00,14:00,20:00}
+  SCRAPER_SCHEDULE_JITTER_MINUTES: ${SCRAPER_SCHEDULE_JITTER_MINUTES:-30}
+  SCRAPER_FAILURE_RETRY_MINUTES: ${SCRAPER_FAILURE_RETRY_MINUTES:-20}
+  SCRAPER_RUN_ON_STARTUP_IF_EMPTY: ${SCRAPER_RUN_ON_STARTUP_IF_EMPTY:-true}
+  SCRAPER_MIN_CONFIDENCE: ${SCRAPER_MIN_CONFIDENCE:-0.5}
+  SCRAPER_RAW_RETENTION_MODE: ${SCRAPER_RAW_RETENTION_MODE:-on_failure}
+  SCRAPER_RAW_RETENTION_DAYS: ${SCRAPER_RAW_RETENTION_DAYS:-14}
+  NOTIFICATION_ENABLED: ${NOTIFICATION_ENABLED:-true}
+  NOTIFICATION_INTERVAL_MINUTES: ${NOTIFICATION_INTERVAL_MINUTES:-15}
+  NOTIFICATION_PROVIDER: ${NOTIFICATION_PROVIDER:-log}
+
+x-app-build: &app-build
+  build:
+    context: .
+    dockerfile: Dockerfile
+    # Production target: no test tooling, no compilers, no test suite.
+    target: runtime
+  image: ipo-tracker:latest
+  # Makes `host.docker.internal` resolve to the host on Linux too; Docker
+  # Desktop (Windows/macOS) provides it natively.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  # One-shot: creates the database if missing, applies migrations, then exits.
+  # api and worker wait for it to succeed, so concurrent replicas never race on
+  # schema changes.
+  migrate:
+    <<: *app-build
+    command: ["migrate"]
+    environment:
+      <<: *app-env
+    restart: "no"
+
+  api:
+    <<: *app-build
+    command: ["api"]
+    environment:
+      <<: *app-env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/live || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *app-build
+    command: ["worker"]
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # The image's HTTP health check belongs to the API; the worker serves no
+    # HTTP. Its health is observable through the scrape_runs table and its
+    # structured logs instead.
+    healthcheck:
+      disable: true

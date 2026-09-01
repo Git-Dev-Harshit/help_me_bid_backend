@@ -1,0 +1,35 @@
+# Test runner overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm test
+#
+# Kept separate from docker-compose.yml so the default `docker compose up`
+# never builds or starts test tooling.
+#
+# Integration tests create and drop their own `ipo_tracker_test` database on the
+# host PostgreSQL server, so they never touch development data.
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Same Dockerfile as the app: the `test` stage is the production image
+      # plus pytest/ruff/mypy and the suite, so tests run against exactly the
+      # runtime that ships.
+      target: test
+    image: ipo-tracker-test:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      APP_ENV: development
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Kolkata}
+      LOG_LEVEL: WARNING
+      LOG_FORMAT: console
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/ipo_tracker}
+      JWT_SECRET_KEY: test-secret-key-not-used-in-production-0123456789
+      # The limiter keeps in-process state, so leaving it on would make results
+      # depend on test order. tests/integration/test_rate_limit.py enables it
+      # explicitly for its own cases.
+      RATE_LIMIT_ENABLED: "false"
+      SCRAPER_ENABLED: "false"
+      NOTIFICATION_ENABLED: "true"
+    command: ["pytest", "-p", "no:cacheprovider"]
