@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Normalise line endings to LF everywhere.
+#
+# This project's files are consumed inside Linux containers. Without this,
+# git's autocrlf on Windows checks scripts/entrypoint.sh out with CRLF, the
+# Docker build copies it in, and the container dies with:
+#     /usr/bin/env: 'bash\r': No such file or directory
+# Forcing eol=lf keeps the working tree LF on every platform.
+# ---------------------------------------------------------------------------
+* text=auto eol=lf
+
+# Explicit for the files where CRLF is actively breaking:
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.py        text eol=lf
+*.yml       text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+*.mako      text eol=lf
+Makefile    text eol=lf
+
+# Never touch these.
+*.png binary
+*.jpg binary
+*.ico binary
